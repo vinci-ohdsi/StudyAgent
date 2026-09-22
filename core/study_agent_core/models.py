@@ -9,6 +9,49 @@ class ConceptSetDiffInput(BaseModel):
     llm_result: Optional[Dict[str, Any]] = None
 
 
+class ConceptSetProposalInput(BaseModel):
+    """Bounded, non-mutating request for a reviewable Atlas concept-set proposal."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    narrative_statement: str = Field(min_length=1, max_length=4000)
+    clarification_answers: Dict[str, str] = Field(default_factory=dict)
+    target_domain: str = Field(default="", max_length=80)
+    atlas_constraints: Dict[str, Any] = Field(default_factory=dict)
+    candidate_limit: int = Field(default=50, ge=1, le=100)
+
+
+class ConceptSetProposalItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    concept_id: int
+    is_excluded: bool = False
+    include_descendants: bool = False
+    include_mapped: bool = False
+    rationale: str = Field(min_length=1, max_length=500)
+
+
+class ConceptSetPolicyProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    proposed_items: List[ConceptSetProposalItem] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+
+
+class ConceptSetProposalOutput(BaseModel):
+    """Review material only; no item in this object is an approved policy."""
+
+    status: Literal["needs_clarification", "needs_concept_review", "unavailable"]
+    retrieval_terms: List[str] = Field(default_factory=list)
+    candidate_provenance: Dict[str, Any] = Field(default_factory=dict)
+    candidates: List[Dict[str, Any]] = Field(default_factory=list)
+    proposed_items: List[ConceptSetProposalItem] = Field(default_factory=list)
+    validation: Dict[str, Any] = Field(default_factory=dict)
+    # Deterministic comparison against a saved Atlas expression. Empty for a new draft.
+    extension_diff: Dict[str, Any] = Field(default_factory=dict)
+    warnings: List[str] = Field(default_factory=list)
+
+
 class CohortLintInput(BaseModel):
     cohort: Dict[str, Any]
     llm_result: Optional[Dict[str, Any]] = None
@@ -292,6 +335,12 @@ class WorkflowContextDialogueArtifactRequest(BaseModel):
     permission_required: bool = False
 
 
+class WorkflowContextDialogueQuestion(BaseModel):
+    id: str
+    prompt: str
+    options: List[str] = Field(default_factory=list)
+
+
 class WorkflowContextDialogueOutput(BaseModel):
     plan: str
     answer: str
@@ -299,6 +348,7 @@ class WorkflowContextDialogueOutput(BaseModel):
     cautions: List[str] = Field(default_factory=list)
     suggested_next_actions: List[str] = Field(default_factory=list)
     follow_up_plan: List[str] = Field(default_factory=list)
+    questions: List[WorkflowContextDialogueQuestion] = Field(default_factory=list)
     artifact_requests: List[WorkflowContextDialogueArtifactRequest] = Field(default_factory=list)
     mode: str
 

@@ -756,6 +756,128 @@ def test_flow_keeper_profiles_rejects_incomplete_extract_response():
 
 
 @pytest.mark.acp
+def test_concept_set_proposal_filters_to_declared_domain_and_uses_technical_gate():
+    class ProposalMCP:
+        def __init__(self):
+            self.calls = []
+
+        def list_tools(self):
+            return []
+
+        def call_tool(self, name, arguments):
+            self.calls.append((name, arguments))
+            if name == "phenotype_make_computable_prompt_bundle":
+                return {"error": "not needed for this focused test"}
+            if name == "vocab_search_standard":
+                assert arguments["domains"] == ["Drug"]
+                return {
+                    "concepts": [
+                        {
+                            "conceptId": 100,
+                            "conceptName": "Test drug",
+                            "domainId": "Drug",
+                            "conceptClassId": "Clinical Drug",
+                            "vocabularyId": "RxNorm",
+                            "standardConcept": "S",
+                        },
+                        {
+                            "conceptId": 200,
+                            "conceptName": "Off-domain procedure",
+                            "domainId": "Procedure",
+                            "standardConcept": "S",
+                        },
+                    ],
+                    "matched_count": 2,
+                }
+            if name == "concept_set_expression_validate":
+                assert arguments["domain"] == "Drug"
+                assert [item["concept_id"] for item in arguments["items"]] == [100]
+                return {"status": "passed", "messages": [], "wrapper": "fixed_minimal_direct_entry_cohort"}
+            raise AssertionError(name)
+
+    mcp = ProposalMCP()
+    agent = StudyAgent(mcp_client=mcp)
+    agent._call_llm = lambda _prompt, required_keys: LLMCallResult(
+        status="ok",
+        parsed_content={
+            "proposed_items": [
+                {
+                    "concept_id": 100,
+                    "is_excluded": False,
+                    "include_descendants": False,
+                    "include_mapped": False,
+                    "rationale": "Retrieved standard drug candidate.",
+                }
+            ],
+            "warnings": [],
+        },
+    )
+    result = agent.run_concept_set_proposal_flow(
+        "test drug exposure",
+        clarification_answers={"route_scope": "all routes"},
+        target_domain="Drug",
+    )
+
+    assert [row["conceptId"] for row in result["candidates"]] == [100]
+    assert [row["concept_id"] for row in result["proposed_items"]] == [100]
+    assert result["validation"]["status"] == "passed"
+    assert result["validation"]["wrapper"] == "fixed_minimal_direct_entry_cohort"
+
+
+@pytest.mark.acp
+def test_concept_set_proposal_merges_validated_items_into_saved_expression():
+    class ProposalMCP:
+        def list_tools(self): return []
+
+        def call_tool(self, name, arguments):
+            if name == "phenotype_make_computable_prompt_bundle":
+                return {"error": "not needed"}
+            if name == "vocab_search_standard":
+                return {"concepts": [{"conceptId": 200, "conceptName": "New drug", "domainId": "Drug", "conceptClassId": "Clinical Drug", "vocabularyId": "RxNorm", "standardConcept": "S"}]}
+            if name == "concept_set_expression_validate":
+                assert [item["concept_id"] for item in arguments["items"]] == [100, 200]
+                return {"status": "passed", "messages": []}
+            raise AssertionError(name)
+
+    agent = StudyAgent(mcp_client=ProposalMCP())
+    agent._call_llm = lambda _prompt, required_keys: LLMCallResult(status="ok", parsed_content={
+        "proposed_items": [{"concept_id": 200, "rationale": "Add the retrieved standard drug."}], "warnings": []})
+    result = agent.run_concept_set_proposal_flow(
+        "extend drug set", clarification_answers={"scope": "all"}, target_domain="Drug",
+        atlas_constraints={"base_expression": {"items": [{"concept": {"CONCEPT_ID": 100}, "isExcluded": False, "includeDescendants": True, "includeMapped": False}]}})
+
+    assert result["validation"]["status"] == "passed"
+    assert [item["concept"]["CONCEPT_ID"] for item in result["validation"]["expression"]["items"]] == [100, 200]
+    assert [item["concept_id"] for item in result["extension_diff"]["additions"]] == [200]
+    assert result["extension_diff"]["policy_changes"] == []
+    assert result["extension_diff"]["removals"] == []
+
+
+@pytest.mark.acp
+def test_concept_set_policy_rejects_nonstandard_or_cross_domain_candidate():
+    policy = {
+        "proposed_items": [
+            {"concept_id": 101, "rationale": "not standard"},
+            {"concept_id": 102, "rationale": "wrong domain"},
+        ],
+        "warnings": [],
+    }
+    approved, errors = StudyAgent.validate_concept_set_policy_proposal(
+        policy,
+        [
+            {"conceptId": 101, "domainId": "Drug", "standardConcept": "C"},
+            {"conceptId": 102, "domainId": "Procedure", "standardConcept": "S"},
+        ],
+        "Drug",
+    )
+    assert approved == []
+    assert {error["msg"] for error in errors} == {
+        "proposed_concept_is_not_standard",
+        "proposed_concept_domain_does_not_match_declared_domain",
+    }
+
+
+@pytest.mark.acp
 def test_extract_keeper_concept_ids_handles_scalar_and_top_level_array():
     from study_agent_acp.agent import StudyAgent
     from study_agent_acp.llm_client import LLMCallResult
@@ -1562,6 +1684,13 @@ def test_flow_workflow_context_dialogue(monkeypatch):
                     "Confirm whether the design is new-user or prevalent-user."
                 ],
                 "follow_up_plan": ["Inspect the compact execution context first."],
+                "questions": [
+                    {
+                        "id": "concept_level",
+                        "prompt": "Which concept level should be reviewed?",
+                        "options": ["ingredient", "clinical_drug", "classification", "all"],
+                    }
+                ],
                 "artifact_requests": [
                     {
                         "artifact_id": "cg_cohort_count_csv",
@@ -1594,10 +1723,56 @@ def test_flow_workflow_context_dialogue(monkeypatch):
     assert result["dialogue"]["follow_up_plan"] == [
         "Inspect the compact execution context first."
     ]
+    assert result["dialogue"]["questions"][0]["options"] == [
+        "ingredient", "clinical_drug", "classification", "all"
+    ]
     assert (
         result["dialogue"]["artifact_requests"][0]["artifact_id"]
         == "cg_cohort_count_csv"
     )
+
+
+@pytest.mark.acp
+def test_concept_set_authoring_forwards_structured_interaction_profile(monkeypatch):
+    agent = StudyAgent(mcp_client=StubMCPClient())
+
+    def fake_call_llm(prompt, required_keys=None):
+        assert '"interaction_profile"' in prompt
+        assert '"bounded_proposal"' in prompt
+        return LLMCallResult(
+            status="ok",
+            parsed_content={
+                "plan": "",
+                "answer": "You can request a bounded proposal or refine the scope first.",
+                "current_step_guidance": ["Choose the next path."],
+                "cautions": [],
+                "suggested_next_actions": [],
+                "follow_up_plan": [],
+                "questions": [],
+                "artifact_requests": [],
+            },
+            content_text="{}",
+            parse_stage="chat_completions_content",
+            schema_valid=True,
+        )
+
+    monkeypatch.setattr(agent, "_call_llm", fake_call_llm)
+    result = agent.run_concept_set_authoring_flow(
+        user_prompt="Help me define acute cystitis.",
+        current_context={
+            "interaction_profile": {
+                "bounded_proposal": {
+                    "available": True,
+                    "local_vocabulary_search": True,
+                    "application": "selected_review",
+                },
+                "manual_concept_search": {"available": True},
+            }
+        },
+    )
+
+    assert result["status"] == "ok"
+    assert result["flow"] == "concept_set_authoring"
 
 
 @pytest.mark.acp

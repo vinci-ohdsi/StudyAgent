@@ -18,6 +18,9 @@ from .phenotype_recommendation_utils import PhenotypeRecommendationMixin
 
 from study_agent_core.models import (
     CohortMethodsIntentSplitInput,
+    ConceptSetProposalInput,
+    ConceptSetProposalOutput,
+    ConceptSetPolicyProposal,
     CohortLintInput,
     ConceptSetDiffInput,
     KeeperConceptSetsGenerateInput,
@@ -2404,7 +2407,7 @@ class StudyAgent(PhenotypeRecommendationMixin):
         self._log_debug("workflow_context_dialogue: calling LLM")
         llm_result = self._call_llm(
             prompt,
-            required_keys=["answer", "current_step_guidance", "cautions", "suggested_next_actions", "follow_up_plan", "artifact_requests"],
+            required_keys=["answer", "current_step_guidance", "cautions", "suggested_next_actions", "follow_up_plan", "questions", "artifact_requests"],
         )
         self._log_debug(
             "workflow_context_dialogue: LLM returned "
@@ -2432,20 +2435,220 @@ class StudyAgent(PhenotypeRecommendationMixin):
         }
 
     def run_concept_set_authoring_flow(
-        self, user_prompt: str, current_context: Optional[Dict[str, Any]] = None
+        self,
+        user_prompt: str,
+        current_context: Optional[Dict[str, Any]] = None,
+        current_step: str = "strategy",
     ) -> Dict[str, Any]:
-        """First, dialogue-only stage of review-gated concept-set authoring."""
+        """Dialogue-only stage of review-gated concept-set authoring."""
         result = self.run_workflow_context_dialogue_flow(
             user_prompt=user_prompt,
             study_intent="Create a reviewable Atlas concept set",
             workflow_type="concept_set_authoring",
-            current_step="strategy",
+            current_step=current_step,
             current_role="concept_set_author",
             current_context=current_context or {},
         )
         result["flow"] = "concept_set_authoring"
         result["persistence_allowed"] = False
         return result
+
+    def run_concept_set_proposal_flow(
+        self,
+        narrative_statement: str,
+        clarification_answers: Optional[Dict[str, str]] = None,
+        target_domain: str = "",
+        atlas_constraints: Optional[Dict[str, Any]] = None,
+        candidate_limit: int = 50,
+    ) -> Dict[str, Any]:
+        """Retrieve bounded, local-vocabulary review material without mutating a concept set."""
+        request = ConceptSetProposalInput(
+            narrative_statement=narrative_statement,
+            clarification_answers=clarification_answers or {},
+            target_domain=target_domain,
+            atlas_constraints=atlas_constraints or {},
+            candidate_limit=candidate_limit,
+        )
+        if self._mcp_client is None:
+            return ConceptSetProposalOutput(
+                status="unavailable",
+                warnings=["MCP client unavailable; no vocabulary candidates were retrieved."],
+            ).model_dump()
+        retrieval_terms = [request.narrative_statement]
+        bundle = self.call_tool("phenotype_make_computable_prompt_bundle", {})
+        bundle_payload = bundle.get("full_result") or {}
+        if bundle.get("status") == "ok" and not bundle_payload.get("error"):
+            term_prompt = build_lint_prompt(
+                bundle_payload.get("concept_terms_overview", ""),
+                bundle_payload.get("concept_terms_spec", ""),
+                bundle_payload.get("concept_terms_schema", {}),
+                "concept_set_proposal_retrieval_terms",
+                {"narrative_statement": request.narrative_statement, "clarification_answers": request.clarification_answers},
+                max_kb=4,
+            )
+            with self._phenotype_make_computable_llm_lock:
+                terms_result = self._call_llm(term_prompt, required_keys=["terms"])
+            if terms_result.status == "ok":
+                try:
+                    retrieval_terms = PhenotypeConceptTermProposal.model_validate(terms_result.parsed_content).terms
+                except ValidationError:
+                    pass
+        per_term_limit = max(1, request.candidate_limit // max(1, len(retrieval_terms)))
+        candidates: List[Dict[str, Any]] = []
+        seen_ids: set[int] = set()
+        term_provenance: List[Dict[str, Any]] = []
+        for term in retrieval_terms[:5]:
+            result = self.call_tool("vocab_search_standard", {"query": term, "domains": [request.target_domain] if request.target_domain else None, "limit": per_term_limit})
+            payload = result.get("full_result") or {}
+            rows = payload.get("concepts") if isinstance(payload.get("concepts"), list) else []
+            term_provenance.append({"term": term, "tool_status": result.get("status"), "matched_count": payload.get("matched_count"), "matched_count_status": payload.get("matched_count_status", "not_available"), "returned_count": len(rows), "limit": per_term_limit})
+            for row in rows:
+                concept_id = row.get("conceptId") if isinstance(row, dict) else None
+                if concept_id in (None, "") or int(concept_id) in seen_ids:
+                    continue
+                if request.target_domain and str(row.get("domainId") or "") != request.target_domain:
+                    continue
+                seen_ids.add(int(concept_id))
+                candidates.append(row)
+                if len(candidates) >= request.candidate_limit:
+                    break
+            if len(candidates) >= request.candidate_limit:
+                break
+        proposed_items: List[Dict[str, Any]] = []
+        warnings = ["Candidate retrieval is review material only; no inclusion, exclusion, descendant, or mapped policy has been approved."]
+        unresolved_scope = any("uncertain" in str(value).casefold() for value in request.clarification_answers.values())
+        if unresolved_scope:
+            warnings.append("A structured scope answer remains uncertain; candidates are available for review but no provisional item policy was generated.")
+        elif candidates:
+            prompt_path = os.path.join(os.path.dirname(__file__), "..", "..", "mcp_server", "prompts", "concept_set_proposal", "spec_concept_set_policy.md")
+            try:
+                with open(prompt_path, encoding="utf-8") as handle:
+                    policy_spec = handle.read()
+                policy_prompt = build_lint_prompt("", policy_spec, {"type": "object"}, "concept_set_policy_proposal", {"narrative_statement": request.narrative_statement, "clarification_answers": request.clarification_answers, "candidates": candidates}, max_kb=24)
+                with self._phenotype_make_computable_llm_lock:
+                    policy_result = self._call_llm(policy_prompt, required_keys=["proposed_items", "warnings"])
+                if policy_result.status == "ok":
+                    proposed_items, policy_errors = self.validate_concept_set_policy_proposal(
+                        policy_result.parsed_content, candidates, request.target_domain
+                    )
+                    if policy_errors:
+                        warnings.append("The provisional policy was rejected because it did not match the retrieved candidate set.")
+                else:
+                    warnings.append("No provisional policy was generated; review the retrieved candidates manually.")
+            except OSError:
+                warnings.append("Concept-set policy prompt unavailable; review the retrieved candidates manually.")
+        candidate_by_id = {int(row["conceptId"]): row for row in candidates if isinstance(row, dict) and row.get("conceptId") not in (None, "")}
+        proposed_expression_items = []
+        for item in proposed_items:
+            candidate = candidate_by_id[item["concept_id"]]
+            proposed_expression_items.append({"concept": {"CONCEPT_ID": item["concept_id"], "CONCEPT_NAME": candidate.get("conceptName", ""), "CONCEPT_CODE": candidate.get("conceptCode", ""), "DOMAIN_ID": candidate.get("domainId", ""), "VOCABULARY_ID": candidate.get("vocabularyId", ""), "CONCEPT_CLASS_ID": candidate.get("conceptClassId", ""), "STANDARD_CONCEPT": candidate.get("standardConcept")}, "isExcluded": item["is_excluded"], "includeDescendants": item["include_descendants"], "includeMapped": item["include_mapped"]})
+        # Extension requests carry a WebAPI-derived saved base expression. Merge only
+        # validated proposal policies; no implicit removal is permitted in this slice.
+        raw_base = request.atlas_constraints.get("base_expression")
+        base_items = raw_base.get("items", []) if isinstance(raw_base, dict) and isinstance(raw_base.get("items"), list) else []
+        def expression_item_id(entry: Any) -> int | None:
+            if not isinstance(entry, dict): return None
+            value = entry.get("conceptId") or entry.get("concept_id") or entry.get("CONCEPT_ID")
+            concept = entry.get("concept")
+            if value is None and isinstance(concept, dict):
+                value = concept.get("conceptId") or concept.get("concept_id") or concept.get("CONCEPT_ID")
+            try: return int(value) if value is not None else None
+            except (TypeError, ValueError): return None
+        base_by_id = {concept_id: entry for entry in base_items if (concept_id := expression_item_id(entry)) is not None}
+        proposed_by_id = {expression_item_id(entry): entry for entry in proposed_expression_items}
+        expression_items = list(base_by_id.values())
+        for concept_id, entry in proposed_by_id.items():
+            if concept_id in base_by_id:
+                expression_items[expression_items.index(base_by_id[concept_id])] = entry
+            else:
+                expression_items.append(entry)
+        extension_diff: Dict[str, Any] = {}
+        if base_items:
+            def policy(entry: Dict[str, Any]) -> tuple[bool, bool, bool]:
+                return (bool(entry.get("isExcluded", entry.get("is_excluded", False))), bool(entry.get("includeDescendants", entry.get("include_descendants", False))), bool(entry.get("includeMapped", entry.get("include_mapped", False))))
+            additions = [item for item in proposed_items if item["concept_id"] not in base_by_id]
+            changes = [item for item in proposed_items if item["concept_id"] in base_by_id and policy(proposed_by_id[item["concept_id"]]) != policy(base_by_id[item["concept_id"]])]
+            extension_diff = {"base_item_count": len(base_items), "additions": additions, "policy_changes": changes, "removals": [], "note": "This proposal preserves all saved policies unless a validated policy change is shown. Removals require an explicit future review action."}
+        validation: Dict[str, Any] = {
+            "status": "not_requested" if not expression_items else "pending_acp_circer_validation",
+            "expression": {"items": expression_items},
+        }
+        if expression_items:
+            validator_items = [
+                {
+                    "concept_id": item["concept"]["CONCEPT_ID"],
+                    "domain": item["concept"].get("DOMAIN_ID", request.target_domain),
+                    "is_excluded": item["isExcluded"],
+                    "include_descendants": item["includeDescendants"],
+                    "include_mapped": item["includeMapped"],
+                }
+                for item in expression_items
+            ]
+            validation_result = self.call_tool(
+                "concept_set_expression_validate",
+                {"domain": request.target_domain, "items": validator_items},
+            )
+            validation_payload = validation_result.get("full_result") or {}
+            validation = {
+                "status": validation_payload.get("status", "unavailable"),
+                "messages": validation_payload.get("messages", []),
+                "wrapper": validation_payload.get("wrapper"),
+                "r_environment": validation_payload.get("r_environment"),
+                "expression": {"items": expression_items},
+            }
+            if validation_result.get("status") != "ok" or validation_payload.get("status") != "passed":
+                warnings.append(
+                    "The provisional expression did not pass ACP-side Capr/CirceR technical validation; review candidates, but do not approve this policy."
+                )
+        return ConceptSetProposalOutput(
+            status="needs_concept_review",
+            retrieval_terms=retrieval_terms[:5],
+            candidate_provenance={
+                "tool": "vocab_search_standard",
+                "per_term": term_provenance,
+                "returned_count": len(candidates),
+                "limit": request.candidate_limit,
+                "atlas_constraints": request.atlas_constraints,
+                "target_domain": request.target_domain or "unspecified",
+            },
+            candidates=candidates,
+            proposed_items=proposed_items,
+            validation=validation,
+            extension_diff=extension_diff,
+            warnings=warnings,
+        ).model_dump()
+
+    @staticmethod
+    def validate_concept_set_policy_proposal(
+        proposal: Dict[str, Any], candidates: List[Dict[str, Any]], target_domain: str = "",
+    ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Fail closed unless every proposed policy refers to one retrieved candidate."""
+        try:
+            parsed = ConceptSetPolicyProposal.model_validate(proposal)
+        except ValidationError as exc:
+            return [], exc.errors(include_url=False)
+        candidate_by_id = {
+            int(row["conceptId"]): row
+            for row in candidates
+            if isinstance(row, dict) and row.get("conceptId") not in (None, "")
+        }
+        errors: List[Dict[str, Any]] = []
+        seen_ids: set[int] = set()
+        approved: List[Dict[str, Any]] = []
+        for index, item in enumerate(parsed.proposed_items):
+            candidate = candidate_by_id.get(item.concept_id)
+            if candidate is None:
+                errors.append({"loc": ("proposed_items", index, "concept_id"), "msg": "proposed_concept_not_in_retrieved_candidates", "concept_id": item.concept_id})
+            elif target_domain and str(candidate.get("domainId") or "") != target_domain:
+                errors.append({"loc": ("proposed_items", index, "concept_id"), "msg": "proposed_concept_domain_does_not_match_declared_domain", "concept_id": item.concept_id})
+            elif str(candidate.get("standardConcept") or "") != "S":
+                errors.append({"loc": ("proposed_items", index, "concept_id"), "msg": "proposed_concept_is_not_standard", "concept_id": item.concept_id})
+            elif item.concept_id in seen_ids:
+                errors.append({"loc": ("proposed_items", index, "concept_id"), "msg": "duplicate_proposed_concept_id", "concept_id": item.concept_id})
+            else:
+                seen_ids.add(item.concept_id)
+                approved.append(item.model_dump())
+        return approved, errors
 
     def run_phenotype_improvements_flow(
         self,

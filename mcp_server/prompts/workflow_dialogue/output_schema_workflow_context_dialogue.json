@@ -33,6 +33,22 @@
         "type": "string"
       }
     },
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "prompt": { "type": "string" },
+          "options": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "required": ["id", "prompt", "options"],
+        "additionalProperties": false
+      }
+    },
     "artifact_requests": {
       "type": "array",
       "items": {
@@ -64,6 +80,7 @@
     "cautions",
     "suggested_next_actions",
     "follow_up_plan",
+    "questions",
     "artifact_requests"
   ],
   "additionalProperties": false

@@ -626,6 +626,7 @@ def workflow_context_dialogue(
     cautions: List[str] = []
     suggested_next_actions: List[str] = []
     follow_up_plan: List[str] = []
+    questions: List[Dict[str, Any]] = []
     artifact_requests: List[Dict[str, Any]] = []
     mode = "llm"
 
@@ -641,6 +642,19 @@ def workflow_context_dialogue(
             suggested_next_actions = [str(item) for item in payload.llm_result["suggested_next_actions"]]
         if isinstance(payload.llm_result.get("follow_up_plan"), list):
             follow_up_plan = [str(item) for item in payload.llm_result["follow_up_plan"]]
+        if isinstance(payload.llm_result.get("questions"), list):
+            for item in payload.llm_result["questions"]:
+                if not isinstance(item, dict):
+                    continue
+                question_id = str(item.get("id") or "").strip()
+                prompt = str(item.get("prompt") or "").strip()
+                options = item.get("options")
+                if question_id and prompt and isinstance(options, list):
+                    questions.append({
+                        "id": question_id,
+                        "prompt": prompt,
+                        "options": [str(option) for option in options if str(option).strip()],
+                    })
         if isinstance(payload.llm_result.get("artifact_requests"), list):
             artifact_requests = []
             for item in payload.llm_result["artifact_requests"]:
@@ -674,6 +688,7 @@ def workflow_context_dialogue(
         cautions=cautions,
         suggested_next_actions=suggested_next_actions,
         follow_up_plan=follow_up_plan,
+        questions=questions,
         artifact_requests=artifact_requests,
         mode=mode,
     )

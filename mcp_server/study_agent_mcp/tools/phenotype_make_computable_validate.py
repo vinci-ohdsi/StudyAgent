@@ -11,7 +11,7 @@ from typing import Any, Dict
 from study_agent_core.config import ConfigError, load_config
 
 from ._common import with_meta
-from .phenotype_make_computable_emit import ENTRY_POINT
+from .phenotype_make_computable_emit import ENTRY_POINT, emit_capr
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _FORBIDDEN_IDENTIFIERS = ("assign", "assigninnamespace", "attach", "connection", "download", "download.file", "dyn.load", "eval", "file", "get", "getnamespace", "library.dynam", "load", "loadnamespace", "parse", "pipe", "readlines", "readrds", "readurl", "save", "serialize", "setwd", "shell", "socket", "source", "system", "system2", "unlink", "url", "write", "writelines")
@@ -125,6 +125,51 @@ def validate_capr_source(capr_code: str, timeout_seconds: int = 60) -> Dict[str,
         return _validate_capr_source_serialized(capr_code, timeout_seconds, r_library)
 
 
+def validate_concept_set_expression(
+    domain: str,
+    items: list[Dict[str, Any]],
+    timeout_seconds: int = 60,
+) -> Dict[str, Any]:
+    """Technically validate an Atlas expression through a fixed Capr/CirceR wrapper.
+
+    CirceR's documented JSON entry point consumes a cohort expression, not a standalone
+    concept-set expression. We therefore compile the supplied items as the sole set in a
+    minimal direct-entry cohort for the declared OMOP domain. This verifies representation
+    and ACP-side CirceR compatibility only; it does not establish clinical validity or
+    compatibility with the WebAPI Circe version.
+    """
+    normalized_domain = str(domain or "").strip()
+    if not normalized_domain:
+        return {"status": "failed", "messages": ["concept_set_domain_required"]}
+    if not isinstance(items, list) or not items:
+        return {"status": "failed", "messages": ["concept_set_items_required"]}
+    if any(not isinstance(item, dict) for item in items):
+        return {"status": "failed", "messages": ["concept_set_items_must_be_objects"]}
+    if any(str(item.get("domain") or item.get("domainId") or normalized_domain) != normalized_domain for item in items):
+        return {"status": "failed", "messages": ["concept_set_items_must_share_declared_domain"]}
+
+    emitted = emit_capr(
+        {
+            "index_event": "Study Agent concept-set technical validation",
+            "entry_limit": "First",
+            "prior_observation": 0,
+            "exit_strategy": "observation",
+            "era_days": 0,
+        },
+        [{"name": "Study Agent proposed concept set", "domain": normalized_domain, "items": items}],
+    )
+    if emitted.get("status") != "passed":
+        return {
+            "status": "failed",
+            "messages": list(emitted.get("messages") or ["concept_set_wrapper_emit_failed"]),
+            "wrapper": "fixed_minimal_direct_entry_cohort",
+        }
+    result = validate_capr_source(str(emitted["capr_code"]), timeout_seconds)
+    result["wrapper"] = "fixed_minimal_direct_entry_cohort"
+    result["domain"] = normalized_domain
+    return result
+
+
 def _validate_capr_source_serialized(capr_code: str, timeout_seconds: int, r_library: str) -> Dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="study-agent-capr-") as directory:
         root = Path(directory)
@@ -160,3 +205,14 @@ def register(mcp: object) -> None:
     @mcp.tool(name="phenotype_make_computable_validate")
     def phenotype_make_computable_validate_tool(capr_code: str, timeout_seconds: int = 60) -> Dict[str, Any]:
         return with_meta(validate_capr_source(capr_code, timeout_seconds), "phenotype_make_computable_validate")
+
+    @mcp.tool(name="concept_set_expression_validate")
+    def concept_set_expression_validate_tool(
+        domain: str,
+        items: list[Dict[str, Any]],
+        timeout_seconds: int = 60,
+    ) -> Dict[str, Any]:
+        return with_meta(
+            validate_concept_set_expression(domain, items, timeout_seconds),
+            "concept_set_expression_validate",
+        )
