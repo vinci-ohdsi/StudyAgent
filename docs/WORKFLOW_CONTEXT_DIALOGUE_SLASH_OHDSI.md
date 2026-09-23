@@ -520,6 +520,7 @@ Atlas save still succeeds, but provenance finalization fails closed. The set is
 not represented as matching the prior `/ohdsi` review.
 
 When reopening a saved set, Atlas requests concise, user-owned `/ohdsi`
-provenance (last goal and review revision) from WebAPI. It is displayed as
-background for a new refinement dialogue; prior assistant advice is not
-silently resumed as an instruction.
+provenance (last goal, applied review revision, and whether it still matches
+Selected) from WebAPI. A mismatch is visibly warned on the provenance card and
+again immediately after a normal save. Prior assistant advice is background for
+a new refinement dialogue; it is not silently resumed as an instruction.
