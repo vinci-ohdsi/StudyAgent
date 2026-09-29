@@ -2778,6 +2778,156 @@ class StudyAgent(PhenotypeRecommendationMixin):
                 approved.append(item.model_dump())
         return approved, errors
 
+    def run_concept_set_policy_review_flow(
+        self,
+        narrative_statement: str,
+        target_domain: str,
+        candidate_snapshot: Optional[List[Dict[str, Any]]] = None,
+        reviewed_items: Optional[List[Dict[str, Any]]] = None,
+        atlas_constraints: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Validate user-selected policy rows against a durable proposal candidate slice.
+
+        This is deliberately retrieval-free: a browser may only stage policies for
+        concepts supplied by the persisted proposal manifest.  It never infers a
+        policy or silently expands the candidate universe.
+        """
+        candidates = [dict(row) for row in (candidate_snapshot or []) if isinstance(row, dict)]
+        selected = [dict(row) for row in (reviewed_items or []) if isinstance(row, dict)]
+        constraints = atlas_constraints or {}
+        warnings = [
+            "User-selected policy rows were validated against the retrieved candidate slice; no additional concepts were retrieved."
+        ]
+        if not candidates:
+            return ConceptSetProposalOutput(
+                status="needs_clarification",
+                warnings=["The referenced candidate slice is unavailable. Request a new bounded proposal before staging policies."],
+            ).model_dump()
+        if not selected:
+            return ConceptSetProposalOutput(
+                status="needs_clarification",
+                candidates=candidates,
+                warnings=["Select at least one retrieved candidate and assign an explicit policy before validation."],
+            ).model_dump()
+
+        approved, policy_errors = self.validate_concept_set_policy_proposal(
+            {"proposed_items": selected, "warnings": []}, candidates, target_domain,
+        )
+        if policy_errors:
+            return ConceptSetProposalOutput(
+                status="needs_clarification",
+                candidates=candidates,
+                warnings=["The staged policy contains a concept outside the retrieved candidate slice or does not meet the declared domain/standard-concept requirements."],
+                validation={"status": "failed", "messages": policy_errors},
+            ).model_dump()
+
+        candidate_by_id = {
+            int(row["conceptId"]): row
+            for row in candidates
+            if row.get("conceptId") not in (None, "")
+        }
+        proposed_expression_items = []
+        for item in approved:
+            candidate = candidate_by_id[item["concept_id"]]
+            proposed_expression_items.append({
+                "concept": {
+                    "CONCEPT_ID": item["concept_id"],
+                    "CONCEPT_NAME": candidate.get("conceptName", ""),
+                    "CONCEPT_CODE": candidate.get("conceptCode", ""),
+                    "DOMAIN_ID": candidate.get("domainId", ""),
+                    "VOCABULARY_ID": candidate.get("vocabularyId", ""),
+                    "CONCEPT_CLASS_ID": candidate.get("conceptClassId", ""),
+                    "STANDARD_CONCEPT": candidate.get("standardConcept"),
+                },
+                "isExcluded": item["is_excluded"],
+                "includeDescendants": item["include_descendants"],
+                "includeMapped": item["include_mapped"],
+            })
+
+        raw_base = constraints.get("base_expression")
+        base_items = raw_base.get("items", []) if isinstance(raw_base, dict) and isinstance(raw_base.get("items"), list) else []
+
+        def expression_item_id(entry: Any) -> int | None:
+            if not isinstance(entry, dict):
+                return None
+            value = entry.get("conceptId") or entry.get("concept_id") or entry.get("CONCEPT_ID")
+            concept = entry.get("concept")
+            if value is None and isinstance(concept, dict):
+                value = concept.get("conceptId") or concept.get("concept_id") or concept.get("CONCEPT_ID")
+            try:
+                return int(value) if value is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        base_by_id = {concept_id: entry for entry in base_items if (concept_id := expression_item_id(entry)) is not None}
+        selected_by_id = {expression_item_id(entry): entry for entry in proposed_expression_items}
+        expression_items = list(base_by_id.values())
+        for concept_id, entry in selected_by_id.items():
+            if concept_id in base_by_id:
+                expression_items[expression_items.index(base_by_id[concept_id])] = entry
+            else:
+                expression_items.append(entry)
+
+        extension_diff: Dict[str, Any] = {}
+        if base_items:
+            def policy(entry: Dict[str, Any]) -> tuple[bool, bool, bool]:
+                return (
+                    bool(entry.get("isExcluded", entry.get("is_excluded", False))),
+                    bool(entry.get("includeDescendants", entry.get("include_descendants", False))),
+                    bool(entry.get("includeMapped", entry.get("include_mapped", False))),
+                )
+            additions = [item for item in approved if item["concept_id"] not in base_by_id]
+            changes = [item for item in approved if item["concept_id"] in base_by_id and policy(selected_by_id[item["concept_id"]]) != policy(base_by_id[item["concept_id"]])]
+            extension_diff = {
+                "base_item_count": len(base_items),
+                "additions": additions,
+                "policy_changes": changes,
+                "removals": [],
+                "note": "The staged review preserves saved policies unless an explicit reviewed policy change is shown. Removals are not inferred.",
+            }
+
+        validator_items = [
+            {
+                "concept_id": item["concept"]["CONCEPT_ID"],
+                "domain": item["concept"].get("DOMAIN_ID", target_domain),
+                "is_excluded": item["isExcluded"],
+                "include_descendants": item["includeDescendants"],
+                "include_mapped": item["includeMapped"],
+            }
+            for item in expression_items
+        ]
+        validation_result = self.call_tool(
+            "concept_set_expression_validate",
+            {"domain": target_domain, "items": validator_items},
+        )
+        validation_payload = validation_result.get("full_result") or {}
+        validation = {
+            "status": validation_payload.get("status", "unavailable"),
+            "messages": validation_payload.get("messages", []),
+            "wrapper": validation_payload.get("wrapper"),
+            "r_environment": validation_payload.get("r_environment"),
+            "expression": {"items": expression_items},
+        }
+        if validation_result.get("status") != "ok" or validation_payload.get("status") != "passed":
+            warnings.append("The staged policy did not pass ACP-side technical validation and cannot be applied to Selected.")
+
+        return ConceptSetProposalOutput(
+            status="needs_concept_review",
+            retrieval_terms=[],
+            candidate_provenance={
+                "tool": "user_reviewed_candidate_slice",
+                "candidate_count": len(candidates),
+                "selected_count": len(approved),
+                "target_domain": target_domain or "unspecified",
+                "atlas_constraints": constraints,
+            },
+            candidates=candidates,
+            proposed_items=approved,
+            validation=validation,
+            extension_diff=extension_diff,
+            warnings=warnings,
+        ).model_dump()
+
     def run_phenotype_improvements_flow(
         self,
         protocol_text: str,

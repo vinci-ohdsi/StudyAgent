@@ -31,6 +31,7 @@ SERVICES = [
     {"name": "cohort_methods_specifications_recommendation", "endpoint": "/flows/cohort_methods_specifications_recommendation"},
     {"name": "workflow_context_dialogue", "endpoint": "/flows/workflow_context_dialogue"},
     {"name": "concept_set_proposal", "endpoint": "/flows/concept_set_proposal"},
+    {"name": "concept_set_policy_review", "endpoint": "/flows/concept_set_policy_review"},
     {"name": "concept_set_authoring", "endpoint": "/flows/concept_set_authoring"},
 ]
 SERVICE_REGISTRY_PATH = os.getenv("STUDY_AGENT_SERVICE_REGISTRY", "docs/SERVICE_REGISTRY.yaml")
@@ -533,6 +534,24 @@ class ACPRequestHandler(BaseHTTPRequestHandler):
                 )
             except Exception as exc:
                 _write_json(self, 400, {"error": f"invalid_concept_set_proposal: {exc}"})
+                return
+            _write_json(self, 200, result)
+            return
+
+        if self.path == "/flows/concept_set_policy_review":
+            try:
+                body = _read_json(self)
+                candidate_snapshot = body.get("candidate_snapshot")
+                reviewed_items = body.get("reviewed_items")
+                result = self.agent.run_concept_set_policy_review_flow(
+                    narrative_statement=str(body.get("narrative_statement") or "").strip(),
+                    target_domain=str(body.get("target_domain") or "").strip(),
+                    candidate_snapshot=candidate_snapshot if isinstance(candidate_snapshot, list) else [],
+                    reviewed_items=reviewed_items if isinstance(reviewed_items, list) else [],
+                    atlas_constraints=body.get("atlas_constraints") if isinstance(body.get("atlas_constraints"), dict) else {},
+                )
+            except Exception as exc:
+                _write_json(self, 400, {"error": f"invalid_concept_set_policy_review: {exc}"})
                 return
             _write_json(self, 200, result)
             return
