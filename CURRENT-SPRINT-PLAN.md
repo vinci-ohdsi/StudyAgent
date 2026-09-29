@@ -1,241 +1,154 @@
 # Current Sprint Plan
 
-## CIPHER-informed phenotype acquisition and composition
+## Objective
 
-### Sprint objective
+Make the completed `/ohdsi` Atlas concept-set and cohort-assistance work
+reproducible and meeting-ready in `sandbox/AtlasWebAPISandbox`, then strengthen
+terminology retrieval and extend cohort composition only through explicit,
+review-gated templates.
 
-Make phenotype recommendations understandable and actionable for Strategus users
-when the best evidence is an OHDSI Circe definition, a non-computable VA CIPHER
-phenotype, or a combination of phenotype sources. A user must be able to inspect a
-plain-language account of a candidate, choose an appropriate use path, and—where
-supported—produce a reviewed, validated, workflow-local Circe definition.
+The immediate priority is a credible Thursday demonstration. It must run from
+recorded source checkpoints and local configuration; it must not imply that a
+portable production container stack or a redistributable Athena vocabulary
+fixture already exists.
 
-This sprint does **not** treat CIPHER narratives or code lists as executable OHDSI
-cohort definitions. Technical validation remains distinct from clinical validation.
+## 1. Meeting-ready `AtlasWebAPISandbox` demo — first priority
 
-### Desired user experience
+Create a runnable `demos/study-agent-demo` profile using the established sprint
+checkpoint tags as its exact source boundary.
 
-The recommendation experience becomes:
+### Deliverables
 
-```text
-recommendations -> inspect understandable candidate definition -> choose how to use it
-```
+- Pin the demo manifest to the StudyAgent, Atlas3, WebAPI3, and documentation
+  tags from the completed sprint.
+- Provide a local configuration template for WebAPI feature flags, the ACP/MCP
+  endpoint, database connection, and Atlas origin. Do not commit secrets.
+- Provide an ordered startup and verification runbook (or a narrow helper
+  script) that checks migrations, permissions, `/ohdsi` availability, and
+  service connectivity.
+- Document a meeting walkthrough with three reliable stories:
+  1. `/ohdsi` concept-set creation and explicit Selected/Included review.
+  2. Phenotype recommendation or library candidate to an unsaved Circe draft.
+  3. Esketamine exposure plus MDD supporting evidence to a reviewed
+     multi-component plan and unsaved cohort draft.
+- Include a browser/network verification that Atlas calls WebAPI only; the
+  browser must not call ACP or MCP directly.
+- Add a lightweight smoke check for the deployed local profile where practical.
 
-Each candidate should present a short, source-cited card rather than only a title,
-CSV, or provider-shaped JSON. The card should clearly distinguish:
+### Boundary
 
-- what the source explicitly defines;
-- what usable evidence it supplies (Circe logic, coded evidence, narrative logic);
-- what ACP infers only as a possible OMOP implementation; and
-- what the user must still decide.
+This is a source-built/local integration profile for the meeting. Digest-pinned
+containers, a portable compose stack, and a licensed vocabulary-fixture build
+remain follow-up hardening work.
 
-Available actions are determined by a readiness assessment:
+## 2. Vocabulary retrieval correctness and review scale
 
-- **Use directly**: ACP can retrieve and validate a complete Circe definition.
-- **Use as a starting point**: source evidence can seed a review-gated conversion
-  or composition workflow.
-- **Review as evidence only**: relevant source material exists, but terminology or
-  logic is insufficient for supported conversion.
-- **Not convertible in this environment**: explain the unsupported vocabulary,
-  unavailable mappings, or missing logic; retain normal `create` acquisition.
+Address the gap demonstrated by ingredient-level ADHD requests before adding
+more cohort templates.
 
-The presentation must stay concise by default. Users can inspect the original source
-snapshot, detailed mappings, full Circe JSON, and review artifacts when needed.
+### Deliverables
 
-### Architecture and responsibility boundaries
+- Ingredient requests must prioritize and, when requested, restrict to valid
+  Ingredient concepts. Clinical formulations must not be presented as if they
+  satisfy ingredient scope.
+- Remove lexical near-matches such as apraclonidine for clonidine through
+  deterministic term, vocabulary, domain, and concept-class constraints.
+- Preserve bounded initial retrieval, but allow the user to search/page the
+  broader candidate universe and stage policy changes across pages.
+- Show and enforce active result constraints rather than treating them as
+  assistant prose.
+- Add regression coverage for atomoxetine, guanfacine, clonidine, viloxazine,
+  and explicit exclusions.
 
-| Concern | Owner |
-|---|---|
-| Retrieve, normalize, snapshot, hash, and present indexed source records | MCP |
-| Deterministically render Circe logic into readable text | MCP |
-| Assess source/mapping/logic readiness and produce mapping evidence | MCP |
-| Orchestrate public contracts, review stages, and provenance | ACP |
-| Confirm scope and concept policies; persist/resume local artifacts; import final Circe | Strategus R shells |
-| Provide the same stable ACP workflow to non-R clients after contracts settle | Optional agent skill |
+### Guardrails
 
-`phenotype_make_computable` remains the only Capr/Circe emitter. It must receive
-explicitly approved OMOP concept policies and confirmed scope; it must not accept raw
-CIPHER codes, text snippets, or an LLM proposal as approved concept sets.
+A retrieval slice is not evidence that a concept set is complete. No concept
+policy is inferred merely because a candidate matched a search term.
 
-### Source-neutral phenotype presentation
+## 3. Reusable concept-set asset handoff
 
-Add an MCP presentation capability, backed by the indexed record and, when needed,
-its immutable full source snapshot. It should return a stable structured object such
-as:
+Complete the remaining attachment path without recreating the normal Atlas
+concept-set editor.
 
-```json
-{
-  "phenotype_id": "cipher:29197",
-  "title": "ACE Inhibitor Induced Cough (PheKB)",
-  "source": "VA CIPHER",
-  "use_mode": "seed_for_composition",
-  "plain_language_summary": "...",
-  "clinical_pattern": {},
-  "source_evidence": {},
-  "important_gaps": [],
-  "available_actions": [],
-  "provenance": {}
-}
-```
+### Deliverables
 
-For native OHDSI cohorts, use a deterministic Circe-to-readable conversion as the
-primary explanation and link it to the exact executable definition. For CIPHER and
-future sources, render known source fields—including `algorithmDesc`, narrative,
-code-system identity, validation, and revision—from the full snapshot. Do not use an
-LLM as the authoritative renderer. Any later fluent LLM wording must remain clearly
-derived from and traceable to deterministic source facts.
+- Let a cohort-plan slot attach an existing saved concept set as an explicit
+  user action, with intended criterion role and domain visible for review.
+- Persist the exact expression snapshot/checksum accepted for the cohort plan.
+- Distinguish the linked source asset from the immutable snapshot used by the
+  generated cohort definition.
+- Preserve normal standalone concept-set editing; later edits must not silently
+  modify a saved or reviewed cohort plan.
 
-### Readiness assessment and supported paths
+### Boundary
 
-Replace the current overly broad CIPHER `codes_only` interpretation with a
-deterministic conversion-readiness assessment. Report separately:
+Archived plans remain audit-retained and non-resumable. Add restore only if
+real use demonstrates a need; do not expand this sprint with a restore UI by
+default.
 
-- source terminology recognition and deployment-specific mapping support; Note that the ACP has a database connection to the OMOP vocabulary and a query could identify what vocabularies are available in the @vocabulary_schema.vocabulary table.  The relationship `Non-standard to Standard map (OMOP)` (`concept_id=44818977`) might be helpful for deterministic run-time checking for mapping feasibility;
-- per-code mapping coverage, ambiguity, standard status, and provenance;
-- narrative/algorithm-logic richness;
-- recovered logic elements: event, occurrence count, timing, care setting,
-  exclusions, first-event/era rules, and control logic;
-- source-method cautions (PheCode, MAP, classifier, text mining, local codes); and
-- an action class: `not_supported`, `source_informed_review`,
-  `mapping_and_scope_review`, or `conversion_candidate`.
+## 4. Controlled expansion of computable cohort projections
 
-Examples that must guide the design:
+Extend only one declared Circe projection template at a time, guided by the
+reference cohorts in `docs/evaluation/phenotype_make_computable/reference_set/`.
 
-- CIPHER GPRD product-code records with no supported mapping or useful logic are
-  `not_supported`.
-- ACE-inhibitor-induced-cough narrative evidence is `source_informed_review` and a
-  seed for composition, not a direct concept set.
-- Read v2/OXMIS records can be `mapping_and_scope_review` only where those
-  vocabularies and mappings are installed; mapped codes do not recreate omitted
-  logic.
-- CIPHER records with mappable codes plus explicit temporal/eligibility logic are
-  `conversion_candidate`s after human review.
-- PheCode records can be candidates when their exact map/version, ICD source codes,
-  count rules, exclusions, and mapping provenance are preserved. PheCode mappings
-  are evidence, not native OMOP logic.
+### Ordered templates
 
-### Composition from phenotype evidence
+1. Generalize supporting Condition evidence to a Condition primary index. This
+   enables symptom/diagnosis confirmation windows such as transverse myelitis.
+2. Add deterministic repeated-event or confirmation-count handling where an
+   explicit Circe projection and review surface can be tested.
+3. Allow one concept-set asset to be bound across Condition and Observation
+   occurrences, needed for rheumatoid-arthritis-style definitions.
 
-Support a source-informed composition branch for records that describe a clinical
-relationship rather than a single reusable cohort. A selected source can seed a
-`phenotype_composition_plan`; it must not cause opaque Circe definitions to be merged.
+The current Condition+overlapping-Visit and Drug+supporting-Condition templates
+remain supported fast paths.
 
-For ACE-inhibitor-induced cough, ACP should propose an unconfirmed pattern:
+### Explicitly deferred
 
-```text
-ACE-inhibitor exposure -> cough after exposure
-```
+Alternate entry paths, nested Boolean groups, complex recurrence/era logic,
+external cohorts, and advanced Circe constructs remain review-only or
+unsupported until each has its own template, tests, and user-facing capability
+boundary.
 
-The preparation response should identify proposed components, their source evidence,
-the relationship, and unresolved decisions. It should retrieve focused evidence for
-each component (for example, ACE-inhibitor exposure concepts and a cough cohort), not
-run another generic title-only recommendation pass. The user must confirm such
-decisions as the risk window, baseline cough exclusion, required outcome occurrences,
-and whether the desired artifact is a case cohort, outcome, or target/comparator/
-outcome study design.
+## 5. CIPHER and source-informed conversion foundation
 
-Generalize composition only through declared, reviewable relationship templates:
+Resume the broader conversion plan only after the meeting demo and terminology
+retrieval work are stable.
 
-- exposure followed by outcome/adverse event (or vice versa);
-- procedure followed by complication (or vice versa);
-- infection followed by sequela;
-- index event with supporting condition/laboratory/medication evidence;
-- concurrent condition; and
-- prior condition as eligibility or exclusion evidence.
+### Deliverables
 
-Each component has independent concept review. The approved composition plan and
-approved component policies are then supplied to `phenotype_make_computable` for the
-single final Capr/Circe artifact.
+- Deterministic phenotype-source cards, immutable source snapshots, and
+  conversion-readiness assessment.
+- Traceable use of non-computable source phenotypes as evidence for a new,
+  review-gated computable plan.
+- One source-informed composition template at most in this sprint.
+- Reference-set tests covering source fidelity, mapping/readiness outcomes, and
+  the prohibition on automatic policy approval.
 
-### ACP and MCP contracts
+### Guardrails
 
-1. Add MCP tools for source snapshot retrieval, source-neutral presentation,
-   terminology/code mapping evidence, and conversion-readiness assessment.
-2. Add an ACP preparation flow (name to settle during implementation, e.g.
-   `phenotype_conversion_prepare`) that accepts a selected `phenotype_id`, creates
-   or returns an immutable source package, and produces an unconfirmed conversion or
-   composition proposal.
-3. Evolve public `phenotype_definition` into the executable-definition boundary:
-   `circe_available` returns complete, validated Circe JSON; non-direct sources
-   return structured `conversion_required` or `not_computable` domain outcomes.
-   Do not expose provider-shaped definition payloads as its public result.
-4. Preserve the selected ID, source revision, canonical JSON SHA-256, source hash,
-   mapping coverage, approved policies, and technical validation provenance.
-5. Keep public naming consistent: use `circe_available`, `conversion_required`, and
-   `not_computable`; readiness/action classes are additional preparation metadata,
-   not replacements for the public computability contract.
+CIPHER codes, mappings, and narrative are evidence—not approved OMOP concept
+policy or executable Circe logic. `phenotype_make_computable` remains the sole
+emitter after explicit scope, policy, binding, and logic review.
 
-### R-client and shell integration
+## 6. Quality and release discipline
 
-Update `slashOhdsiAcpClient` with the new presentation/preparation calls and typed,
-validated response handling. Update the shared Strategus acquisition component first,
-then apply it to incidence (target/outcome) and cohort-methods (target/comparator/
-outcome).
+- Add focused automated smoke coverage for the local demo profile, feature
+  permissions, migration, and the three meeting stories.
+- Keep the sandbox manifest/runbook synchronized with exact source tags,
+  commits, environment prerequisites, and tested commands.
+- Record model identifier/version and inference settings when a live ACP/LLM
+  path is demonstrated.
+- Create a new release checkpoint only after the documented demo can be
+  reproduced from a clean local setup.
 
-The shell should display candidate cards and actions, prompt for composition decisions
-in plain language, and persist resumable artifacts under
-`phenotype-conversion/<role>/`, including:
+## Cross-cutting non-negotiables
 
-- immutable source snapshot and hashes;
-- presentation/readiness result;
-- mapping evidence and user review materials;
-- confirmed scope and composition plan;
-- approved concept policies and approval record; and
-- resulting make-computable Capr, Circe, and validation evidence.
-
-The final Circe JSON is imported exactly like the existing `create` path: as a
-workflow-local cohort artifact. The generated Strategus workflow must not depend on
-the ACP phenotype index or PhenotypeLibrary at execution time.
-
-### Development reference set and test strategy
-
-Create a small, versioned CIPHER conversion reference set before implementing broad
-support. Start with 10–20 records deliberately spanning unsupported vocabularies,
-text snippets, code-only records, narrative-rich algorithms, PheCodes, and clearly
-convertible examples. Include the discussed records where licensing/data handling
-permits: `cipher:30687`, `cipher:29197`, `cipher:29218`, `cipher:29772`,
-`cipher:17527`, and `cipher:14189`.
-
-For each reference record, define expected source fields, readiness/action class,
-mapping expectations, required human decisions, and whether Circe emission is
-prohibited or possible after review. In particular, test that `algorithmDesc` and
-other useful source logic survive indexing and source-snapshot retrieval.
-
-Add focused tests for:
-
-- deterministic Circe and CIPHER presentations;
-- source snapshot/revision/content-hash integrity;
-- mapping coverage and unsupported-vocabulary outcomes;
-- no automatic concept approval from source codes, text snippets, or LLM output;
-- composition-plan relationship and unresolved-decision requirements;
-- direct Circe retrieval, canonical-hash matching, and malformed provider-data
-  rejection;
-- conversion failure returning no `circe_json`; and
-- shell artifact persistence and resume behavior for all cohort roles.
-
-### Delivery sequence
-
-1. Define the reference set and readiness/presentation schemas.
-2. Fix/verify indexing and snapshot fidelity, particularly CIPHER `algorithmDesc`.
-3. Implement deterministic MCP presentation, snapshot, and readiness tools.
-4. Implement mapping-evidence support for a narrow, configured initial vocabulary
-   set; report unsupported sources explicitly.
-5. Add ACP preparation and public executable-definition contracts with provenance.
-6. Add source-informed composition for one relationship template: exposure followed
-   by outcome.
-7. Integrate the shared shell acquisition UX in incidence first, then cohort methods.
-8. Expand source families and relationship templates only after reference-set and
-   workflow tests demonstrate stable, review-gated behavior.
-
-### Non-negotiable guardrails
-
+- Atlas browser traffic goes only to WebAPI; ACP/MCP and all credentials remain
+  server-side.
 - No PHI/PII is sent to an LLM.
-- A candidate limit is retrieval convenience, never evidence that a concept set is
-  complete.
-- CIPHER source codes, PheCodes, mappings, and narrative are review evidence, not
-  clinical approval or executable cohort logic.
-- No Capr/Circe artifact is emitted before explicit scope and concept-set approval.
-- Successful technical validation does not establish clinical or database-level
-  phenotype validity.
-- Unsupported, ambiguous, or incompletely specified sources fail closed into
-  explanation and clarification rather than partial executable JSON.
+- Concept-set asset, criterion binding, and cohort logic remain separate models.
+- No full large concept expansion is sent to an LLM.
+- No Circe draft is emitted until every required concept-set policy and cohort
+  logic decision is explicitly confirmed.
+- Reference cohorts are development evidence, not clinical gold standards.

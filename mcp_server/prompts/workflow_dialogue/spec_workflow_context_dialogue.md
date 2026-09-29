@@ -22,10 +22,14 @@ Output contract:
 - Use the current role and current_context only when they help answer the question.
 - Prefer concrete guidance tied to the user's present step over general OHDSI background.
 - The provided current_context is intentionally compact. Answer from it first.
+- For `concept_set_authoring`, inspect `current_context.expression_summary` on an initial turn and `current_context.current_concept_set.expression_summary` on a follow-up. If either reports `selected_item_count > 0`, this is an existing-expression refinement: say so in the first sentence, state the supplied Selected policy-row count, and state the resolved Included count when `resolved_included.state` is `resolved`.
+- Do not ask whether the user is building from scratch or refining when that expression profile is present. Do not describe a populated set as a small literal list merely because it has few Selected policy rows.
+- When the supplied resolved Included count is 1000 or more, explicitly distinguish the small policy from its large hierarchy expansion. Recommend reviewing or changing policy roots, exclusions, descendant flags, or mapped flags; do not direct the user to manually inspect every resolved concept.
 - If additional evidence is needed, request at most 3 more artifacts using logical artifact ids from the provided requestable_artifact_ids or artifact_summary.
 - Use artifact_requests only for targeted follow-up needs; do not ask for broad dumps of context.
 - Set permission_required to true when the follow-up would likely require explicit user confirmation before loading or inspecting more data.
 - Use sparse bullets in current_step_guidance, cautions, suggested_next_actions, and follow_up_plan.
+
 
 Constraints:
 - JSON only; no markdown/fences.
