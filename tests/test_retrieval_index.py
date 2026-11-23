@@ -1,6 +1,25 @@
 import pytest
 
 from study_agent_mcp.retrieval import PhenotypeIndex
+from study_agent_mcp.retrieval.index import EmbeddingClient
+
+
+@pytest.mark.mcp
+def test_embedding_client_requires_key_when_authentication_is_required(monkeypatch):
+    monkeypatch.setenv("EMBED_AUTHENTICATION", "required")
+    client = EmbeddingClient(url="http://embedding.test/embed", model="test")
+
+    with pytest.raises(RuntimeError, match="EMBED_API_KEY is required"):
+        client.embed_texts(["test"])
+
+
+@pytest.mark.mcp
+def test_embedding_client_rejects_unknown_authentication_mode(monkeypatch):
+    monkeypatch.setenv("EMBED_AUTHENTICATION", "invalid")
+    client = EmbeddingClient(url="http://embedding.test/embed", model="test")
+
+    with pytest.raises(RuntimeError, match="EMBED_AUTHENTICATION must be"):
+        client.embed_texts(["test"])
 
 
 @pytest.mark.mcp

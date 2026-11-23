@@ -165,6 +165,7 @@ class LLMConfig(StrictModel):
 class RetrievalConfig(StrictModel):
     embedding_url: str = "http://localhost:3000/ollama/api/embed"
     embedding_model: str = "qwen3-embedding:4b"
+    authentication: Literal["required", "none"] = "required"
     timeout_seconds: int = Field(default=120, ge=1)
     log: bool = False
     dense_weight: float | None = None
@@ -449,6 +450,7 @@ def project_to_environment(config: StudyAgentConfig) -> dict[str, str]:
         "LLM_PLANNING_TOP_BAND": config.llm.planning_top_band,
         "EMBED_URL": config.retrieval.embedding_url,
         "EMBED_MODEL": config.retrieval.embedding_model,
+        "EMBED_AUTHENTICATION": config.retrieval.authentication,
         "EMBED_TIMEOUT": config.retrieval.timeout_seconds,
         "EMBED_LOG": config.retrieval.log,
         "PHENOTYPE_DENSE_WEIGHT": config.retrieval.dense_weight,

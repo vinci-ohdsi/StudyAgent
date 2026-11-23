@@ -175,7 +175,8 @@ Practical selection rules:
 | `PHENOTYPE_INDEX_DIR` | MCP retrieval, ACP preflight, R wrappers | Path to the built phenotype index directory. Use an absolute path when possible. |
 | `EMBED_URL` | MCP retrieval, indexing scripts | Embedding endpoint URL. |
 | `EMBED_MODEL` | MCP retrieval, indexing scripts | Embedding model name. |
-| `EMBED_API_KEY` | MCP retrieval, indexing scripts | Optional embedding API key. |
+| `EMBED_API_KEY` | MCP retrieval, indexing scripts | Required when `retrieval.authentication` is `required` (the default). |
+| `EMBED_AUTHENTICATION` | MCP retrieval, indexing scripts | Projected from `retrieval.authentication`: `required` (default) or `none`. With `none`, MCP omits Authorization and does not require `EMBED_API_KEY`; use only with a trusted keyless endpoint. |
 | `EMBED_TIMEOUT` | MCP retrieval | Embedding request timeout in seconds. Default `120`. |
 | `EMBED_LOG` | MCP retrieval | Enables embedding-layer debug logging. |
 | `PHENOTYPE_DENSE_WEIGHT` | MCP retrieval | Weight assigned to dense retrieval when blending dense and sparse scores. |

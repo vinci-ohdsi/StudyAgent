@@ -42,6 +42,7 @@ def test_collect_configuration_separates_secret_values_from_yaml() -> None:
     assert secrets == {"LLM_API_KEY": "llm-secret-value"}
     assert "llm-secret-value" not in content
     assert "LLM_API_KEY" not in content
+    assert "authentication: none" in content
     assert "llm-secret-value" not in "\n".join(output)
     assert "level: INFO" in content
     assert "acp_file: study-agent-logs/study-agent-acp.log" in content

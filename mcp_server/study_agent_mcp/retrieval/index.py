@@ -90,10 +90,20 @@ class EmbeddingClient:
         return os.getenv("STUDY_AGENT_DEBUG", "0") == "1" or os.getenv("EMBED_LOG", "0") == "1"
 
     def embed_texts(self, texts: List[str]) -> List[List[float]]:
+        authentication = os.getenv("EMBED_AUTHENTICATION", "required").strip().lower()
+        if authentication not in {"required", "none"}:
+            raise RuntimeError(
+                "EMBED_AUTHENTICATION must be 'required' or 'none'"
+            )
+        if authentication == "required" and not self.api_key:
+            raise RuntimeError(
+                "EMBED_API_KEY is required while EMBED_AUTHENTICATION=required. "
+                "Set retrieval.authentication: none only for a trusted keyless endpoint."
+            )
         payload = json.dumps({"model": self.model, "input": texts}).encode("utf-8")
         request = urllib.request.Request(self.url, data=payload, method="POST")
         request.add_header("Content-Type", "application/json")
-        if self.api_key:
+        if authentication == "required":
             request.add_header("Authorization", f"Bearer {self.api_key}")
         start = time.time()
         try:

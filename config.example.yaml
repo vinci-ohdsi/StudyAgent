@@ -59,6 +59,8 @@ llm:
 retrieval:
   embedding_url: http://localhost:3000/ollama/api/embed
   embedding_model: qwen3-embedding:4b
+  # Set to none only for a trusted embedding endpoint that does not require a key.
+  authentication: required
   timeout_seconds: 120
   # EMBED_LOG
   log: false

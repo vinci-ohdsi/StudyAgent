@@ -134,6 +134,7 @@ def _config_document(values: Mapping[str, str], run_style: str) -> dict[str, obj
         document["retrieval"] = {
             "embedding_url": values["EMBED_URL"],
             "embedding_model": values["EMBED_MODEL"],
+            "authentication": values.get("EMBED_AUTHENTICATION", "required"),
         }
     if "VOCAB_SEARCH_PROVIDER" in values:
         document["keeper"] = {
@@ -161,6 +162,7 @@ _OPTIONAL_SECTION_STUBS = {
         "# retrieval:\n"
         "#   embedding_url: http://embedding-host/api/embed\n"
         "#   embedding_model: configured-embedding-model\n"
+        "#   authentication: required\n"
     ),
     "keeper": (
         "# Optional vocabulary and Keeper support. Uncomment when configuring Hecate or an OMOP vocabulary service.\n"
@@ -330,16 +332,17 @@ def collect_configuration(
         values["EMBED_MODEL"] = _prompt_text(
             "Embedding model", default="qwen3-embedding:4b", input_fn=input_fn
         )
-        if (
-            _prompt_choice(
-                "Does the embedding API require a key?",
-                {"yes": "yes", "no": "no"},
-                default="no",
-                input_fn=input_fn,
-                output_fn=output_fn,
-            )
-            == "yes"
-        ):
+        embedding_authentication = _prompt_choice(
+            "Does the embedding API require a key?",
+            {"yes": "yes", "no": "no"},
+            default="yes",
+            input_fn=input_fn,
+            output_fn=output_fn,
+        )
+        values["EMBED_AUTHENTICATION"] = (
+            "required" if embedding_authentication == "yes" else "none"
+        )
+        if values["EMBED_AUTHENTICATION"] == "required":
             secrets["EMBED_API_KEY"] = _prompt_required_secret(
                 "Embedding API key", secret_input=secret_input, output_fn=output_fn
             )

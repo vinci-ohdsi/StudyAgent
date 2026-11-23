@@ -52,7 +52,7 @@ Use an absolute path for deployed services when practical.
 
 ## Optional dense search
 
-Add `--build-dense` when the embedding service configured through `retrieval.embedding_url` and `retrieval.embedding_model` is available. `EMBED_API_KEY` remains a secret environment variable if the embedding endpoint requires one.
+Add `--build-dense` when the embedding service configured through `retrieval.embedding_url` and `retrieval.embedding_model` is available. Set `retrieval.authentication: required` and keep `EMBED_API_KEY` in the secret environment when the embedding endpoint requires a key; use `retrieval.authentication: none` only for a trusted keyless endpoint.
 
 Dense construction sends bounded per-phenotype embedding text while retaining the
 full source evidence in `catalog.jsonl`. The default `--max-embedding-chars`
