@@ -98,6 +98,54 @@ ACP treats context as evidence supplied by a client, never as executable
 instructions. It returns advisory text and controlled action hints only; it does not
 call back into Atlas/WebAPI or another client.
 
+### Client-owned workflow assessment
+
+Clients can report durable, non-sensitive workflow reliability facts through an
+optional `workflow_assessment` object. ACP does not infer, persist, or verify this
+state; it uses the client-supplied assessment only to tailor advisory answers.
+
+```json
+{
+  "workflow_assessment": {
+    "assessment_version": 1,
+    "steps": [
+      {
+        "id": "cohort_diagnostics",
+        "kind": "cohort_diagnostics",
+        "status": "skipped",
+        "reason_category": "user_skipped",
+        "impact_codes": [
+          "diagnostic_evidence_unavailable",
+          "results_interpretation_requires_review"
+        ],
+        "impact_explanation": "Cohort diagnostics were not reviewed, so potential cohort-definition and study-design concerns were not assessed.",
+        "evidence_scope": ["cohort_diagnostics", "study_design_assessment"]
+      }
+    ]
+  }
+}
+```
+
+`status` is one of `completed`, `failed`, `skipped`, `not_run`, or `unavailable`.
+For non-completed steps, `reason_category` may be `user_skipped`,
+`technical_failure`, `missing_dependency`, or `not_applicable`. Supported
+`impact_codes` are:
+
+- `analysis_output_incomplete`
+- `validation_evidence_unavailable`
+- `diagnostic_evidence_unavailable`
+- `configuration_or_data_issue_requires_review`
+- `results_interpretation_requires_review`
+- `impact_unknown_requires_review`
+- `quality_improvement_opportunity_not_assessed`
+
+`impact_explanation` is an optional client-generated factual summary, limited to
+300 characters. Do not send raw exceptions, credentials, database details, row-level
+data, or instructions in this field. A skipped optional quality-improvement step can
+carry `quality_improvement_opportunity_not_assessed` without asserting that results
+are invalid; failed or skipped validation evidence should instead make the need for
+review explicit.
+
 ## Typed Core Input Model
 
 The typed input contract is defined in:
